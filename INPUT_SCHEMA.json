@@ -7,24 +7,28 @@
       "title": "Start page",
       "type": "integer",
       "minimum": 1,
-      "default": 1
+      "default": 1,
+      "description": "The page number to start scraping from (1-202)"
     },
     "endPage": {
       "title": "End page",
       "type": "integer",
       "minimum": 1,
-      "default": 202
+      "default": 202,
+      "description": "The page number to stop scraping at (1-202)"
     },
     "rateLimitMs": {
       "title": "Delay between requests (ms)",
       "type": "integer",
       "minimum": 0,
-      "default": 800
+      "default": 800,
+      "description": "Delay between requests to avoid being blocked"
     },
     "useApifyProxy": {
       "title": "Use Apify Proxy",
       "type": "boolean",
-      "default": true
+      "default": true,
+      "description": "Whether to use Apify's proxy service"
     }
   },
   "required": [
