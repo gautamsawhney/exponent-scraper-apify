@@ -21,8 +21,8 @@
       "title": "Delay between requests (ms)",
       "type": "integer",
       "minimum": 0,
-      "default": 3000,
-      "description": "Delay between requests to avoid being blocked (recommended: 3000-5000ms)"
+      "default": 1000,
+      "description": "Delay between requests to avoid being blocked (optimized for Apify's 3-minute limit)"
     },
     "useApifyProxy": {
       "title": "Use Apify Proxy",
