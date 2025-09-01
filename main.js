@@ -163,33 +163,85 @@ function parseIndexPage($) {
   return questions;
 }
 
+function parseCookies(cookieString) {
+  if (!cookieString) return {};
+  
+  const cookies = {};
+  cookieString.split(';').forEach(cookie => {
+    const [name, value] = cookie.trim().split('=');
+    if (name && value) {
+      cookies[name] = value;
+    }
+  });
+  return cookies;
+}
+
 await Actor.init();
 
 const input = await Actor.getInput() || {};
 const {
   startPage = 1,
   endPage = 50,
-  rateLimitMs = 1000, // Reduced from 3000ms to 1 second
+  rateLimitMs = 1000,
   useApifyProxy = true,
+  apiToken,
+  cookies: cookieString,
+  userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 } = input;
 
 if (startPage > endPage) {
   throw new Error(`startPage (${startPage}) must be <= endPage (${endPage}).`);
 }
 
+// Parse cookies if provided
+const parsedCookies = parseCookies(cookieString);
+
+// Create requests with authentication headers
 const requestList = [];
 for (let p = startPage; p <= endPage; p += 1) {
-  requestList.push({ url: `${INDEX}?page=${p}`, userData: { label: 'INDEX', page: p } });
+  const requestOptions = {
+    url: `${INDEX}?page=${p}`,
+    userData: { 
+      label: 'INDEX', 
+      page: p 
+    }
+  };
+
+  // Add authentication headers if API token is provided
+  if (apiToken) {
+    requestOptions.headers = {
+      'Authorization': `Bearer ${apiToken}`,
+      'User-Agent': userAgent,
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.5',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'DNT': '1',
+      'Connection': 'keep-alive',
+      'Upgrade-Insecure-Requests': '1',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Cache-Control': 'max-age=0'
+    };
+  }
+
+  // Add cookies if provided
+  if (Object.keys(parsedCookies).length > 0) {
+    if (!requestOptions.headers) requestOptions.headers = {};
+    requestOptions.headers['Cookie'] = cookieString;
+  }
+
+  requestList.push(requestOptions);
 }
 
 const crawler = new CheerioCrawler({
   proxyConfiguration: useApifyProxy
     ? await Actor.createProxyConfiguration()
     : undefined,
-  maxConcurrency: 2, // Increased to 2 for faster processing
-  requestHandlerTimeoutSecs: 60, // Reduced timeout
-  maxRequestsPerMinute: 30, // Increased to 30 requests per minute
-  maxRequestRetries: 2, // Reduced retries
+  maxConcurrency: 2,
+  requestHandlerTimeoutSecs: 60,
+  maxRequestsPerMinute: 30,
+  maxRequestRetries: 2,
   requestHandler: async ({ request, $, log: crawleeLog }) => {
     const { label } = request.userData;
 
@@ -204,8 +256,8 @@ const crawler = new CheerioCrawler({
         crawleeLog.info(`Processing index page ${page}`);
         
         // Add minimal extra delay for pages that might be rate limited
-        if (page > 1 && page % 5 === 0) { // Only add delay every 5 pages
-          const extraDelay = 2000; // 2 second delay every 5 pages
+        if (page > 1 && page % 5 === 0) {
+          const extraDelay = 2000;
           crawleeLog.info(`Adding extra delay of ${extraDelay}ms for page ${page}`);
           await sleep(extraDelay);
         }
@@ -218,7 +270,7 @@ const crawler = new CheerioCrawler({
           
           // If we get blocked, wait a bit longer but not too much
           if (page < endPage) {
-            const blockDelay = 5000; // 5 second delay if blocked
+            const blockDelay = 5000;
             crawleeLog.info(`Page ${page} appears blocked, waiting ${blockDelay}ms before continuing`);
             await sleep(blockDelay);
           }
