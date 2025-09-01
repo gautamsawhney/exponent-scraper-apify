@@ -14,15 +14,15 @@
       "title": "End page",
       "type": "integer",
       "minimum": 1,
-      "default": 5,
+      "default": 50,
       "description": "The page number to stop scraping at (1-202)"
     },
     "rateLimitMs": {
       "title": "Delay between requests (ms)",
       "type": "integer",
       "minimum": 0,
-      "default": 800,
-      "description": "Delay between requests to avoid being blocked"
+      "default": 3000,
+      "description": "Delay between requests to avoid being blocked (recommended: 3000-5000ms)"
     },
     "useApifyProxy": {
       "title": "Use Apify Proxy",

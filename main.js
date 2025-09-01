@@ -168,8 +168,8 @@ await Actor.init();
 const input = await Actor.getInput() || {};
 const {
   startPage = 1,
-  endPage = 5,
-  rateLimitMs = 800,
+  endPage = 50,
+  rateLimitMs = 3000, // Increased from 800ms to 3 seconds
   useApifyProxy = true,
 } = input;
 
@@ -186,24 +186,43 @@ const crawler = new CheerioCrawler({
   proxyConfiguration: useApifyProxy
     ? await Actor.createProxyConfiguration()
     : undefined,
-  maxConcurrency: 3,
-  requestHandlerTimeoutSecs: 60,
-  maxRequestsPerMinute: 45,
-  maxRequestRetries: 2,
+  maxConcurrency: 1, // Reduced to 1 to avoid overwhelming the server
+  requestHandlerTimeoutSecs: 120, // Increased timeout
+  maxRequestsPerMinute: 15, // Reduced to 15 requests per minute (very conservative)
+  maxRequestRetries: 3, // Increased retries
   requestHandler: async ({ request, $, log: crawleeLog }) => {
     const { label } = request.userData;
 
-    if (rateLimitMs > 0) await sleep(rateLimitMs);
+    // Apply base rate limiting
+    if (rateLimitMs > 0) {
+      crawleeLog.info(`Waiting ${rateLimitMs}ms for rate limiting`);
+      await sleep(rateLimitMs);
+    }
 
     try {
       if (label === 'INDEX') {
         const page = request.userData.page;
         crawleeLog.info(`Processing index page ${page}`);
+        
+        // Add extra delay for pages that might be rate limited
+        if (page > 1) {
+          const extraDelay = Math.min(page * 500, 10000); // Up to 10 seconds extra delay, but more gradual
+          crawleeLog.info(`Adding extra delay of ${extraDelay}ms for page ${page}`);
+          await sleep(extraDelay);
+        }
+        
         const questions = parseIndexPage($);
         crawleeLog.info(`Found ${questions.length} questions on page ${page}`);
         
         if (questions.length === 0) {
           crawleeLog.warning(`No questions found on page ${page} - page might be empty or blocked`);
+          
+          // If we get blocked, wait longer before next request
+          if (page < endPage) {
+            const blockDelay = 15000; // 15 second delay if blocked
+            crawleeLog.info(`Page ${page} appears blocked, waiting ${blockDelay}ms before continuing`);
+            await sleep(blockDelay);
+          }
         }
         
         // Save all questions from this page
@@ -212,6 +231,9 @@ const crawler = new CheerioCrawler({
         }
         
         crawleeLog.info(`Saved ${questions.length} questions from page ${page}`);
+        
+        // Add success delay
+        await sleep(2000);
       }
     } catch (error) {
       crawleeLog.error(`Error processing ${request.url}: ${error.message}`);
@@ -222,6 +244,9 @@ const crawler = new CheerioCrawler({
         error: error.message,
         timestamp: new Date().toISOString()
       });
+      
+      // If error occurs, wait longer before next request
+      await sleep(10000);
     }
   },
   failedRequestHandler: async ({ request, error }) => {
@@ -234,6 +259,9 @@ const crawler = new CheerioCrawler({
       status: 'FAILED',
       timestamp: new Date().toISOString()
     });
+    
+    // Wait longer after failed requests
+    await sleep(15000);
   },
 });
 
