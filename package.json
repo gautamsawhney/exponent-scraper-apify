@@ -1,0 +1,12 @@
+{
+  "name": "exponent-questions-scraper",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "apify": "^3.1.10",
+    "crawlee": "^3.9.3"
+  },
+  "scripts": {
+    "start": "node main.js"
+  }
+}

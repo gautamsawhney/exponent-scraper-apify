@@ -1,0 +1,14 @@
+{
+  "name": "exponent-questions-scraper",
+  "version": "1.0",
+  "buildTag": "latest",
+  "env": {},
+  "tableDisplayFields": [
+    "questionText",
+    "companyNames",
+    "askedWhen",
+    "tags",
+    "answerCount",
+    "answersUrl"
+  ]
+}
