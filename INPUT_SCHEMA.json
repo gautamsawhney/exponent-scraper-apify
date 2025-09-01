@@ -33,16 +33,19 @@
     "apiToken": {
       "title": "API Token",
       "type": "string",
+      "editor": "textfield",
       "description": "Your Exponent API token for authenticated requests (optional but recommended)"
     },
     "cookies": {
       "title": "Cookies",
       "type": "string",
+      "editor": "textarea",
       "description": "Your browser cookies from logged-in Exponent session (copy from browser dev tools)"
     },
     "userAgent": {
       "title": "User Agent",
       "type": "string",
+      "editor": "textfield",
       "default": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       "description": "Custom user agent string to mimic real browser"
     }
