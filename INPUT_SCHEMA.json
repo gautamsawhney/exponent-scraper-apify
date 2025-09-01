@@ -14,7 +14,7 @@
       "title": "End page",
       "type": "integer",
       "minimum": 1,
-      "default": 202,
+      "default": 5,
       "description": "The page number to stop scraping at (1-202)"
     },
     "rateLimitMs": {

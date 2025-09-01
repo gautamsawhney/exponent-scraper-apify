@@ -39,61 +39,49 @@ function uniq(arr) {
   return [...new Set(arr.filter(Boolean).map((s) => s.trim()))];
 }
 
-function parseQuestionPage($, url) {
-  const questionText =
-    clean($('h1').first().text()) ||
-    clean($('h2').first().text()) ||
-    clean($('[class*="question-title"], [class*="title"]').first().text());
+function parseQuestionCard($, questionElement) {
+  // Extract question text from the card
+  const questionText = clean(
+    $(questionElement).find('h3, h4, [class*="title"], [class*="question"]').first().text() ||
+    $(questionElement).find('a').first().text()
+  );
 
-  // Extract tags from multiple possible sources
+  // Extract tags from the card
   const tags = uniq([
-    ...$('[class*="tag"]').map((_, el) => $(el).text()).get(),
-    ...$('a[href^="/questions?type="], a[href^="/questions?category="]').map((_, el) => $(el).text()).get(),
-    ...$('[class*="category"], [class*="topic"]').map((_, el) => $(el).text()).get()
+    ...$(questionElement).find('[class*="tag"], [class*="category"], [class*="topic"]').map((_, el) => $(el).text()).get(),
+    ...$(questionElement).find('a[href*="type="], a[href*="category="]').map((_, el) => $(el).text()).get()
   ]).join(', ');
 
-  // Extract company names from multiple sources
+  // Extract company names from the card
   const companySources = [
-    // From query parameters in links
-    ...$('a[href*="?company="]').map((_, el) => $(el).text()).get(),
-    // From company badges or labels
-    ...$('[class*="company"], [class*="badge"][class*="company"]').map((_, el) => $(el).text()).get(),
-    // From text content mentioning companies
-    ...$('body').text().match(/\b(?:at|from|asked at)\s+([A-Z][a-zA-Z\s&]+(?:Inc|Corp|LLC|Ltd|Company|Co\.?))\b/gi)?.map(m => m.replace(/^(?:at|from|asked at)\s+/i, '')) || [],
-    // Common tech companies
-    ...$('body').text().match(/\b(Google|Facebook|Meta|Amazon|Apple|Microsoft|Netflix|Uber|Airbnb|Twitter|LinkedIn|Salesforce|Adobe|Oracle|IBM|Intel|NVIDIA|AMD|Tesla|SpaceX|Stripe|Square|Palantir|Databricks|Snowflake|MongoDB|Atlassian|Slack|Zoom|Discord|TikTok|ByteDance|Alibaba|Tencent|Baidu|ByteDance)\b/gi) || []
+    ...$(questionElement).find('a[href*="?company="]').map((_, el) => $(el).text()).get(),
+    ...$(questionElement).find('[class*="company"], [class*="badge"][class*="company"]').map((_, el) => $(el).text()).get(),
+    ...$(questionElement).text().match(/\b(Google|Facebook|Meta|Amazon|Apple|Microsoft|Netflix|Uber|Airbnb|Twitter|LinkedIn|Salesforce|Adobe|Oracle|IBM|Intel|NVIDIA|AMD|Tesla|SpaceX|Stripe|Square|Palantir|Databricks|Snowflake|MongoDB|Atlassian|Slack|Zoom|Discord|TikTok|ByteDance|Alibaba|Tencent|Baidu)\b/gi) || []
   ];
   
   const companyNames = uniq(companySources.filter(c => c.length > 1 && c.length < 100)).join(', ');
 
+  // Extract answer count from the card
   let answerCount = 0;
-  const textNodes = $('body').text();
-  const matches = [...textNodes.matchAll(/\b(\d+)\s+answers?\b/gi)];
+  const answerText = $(questionElement).text();
+  const matches = [...answerText.matchAll(/\b(\d+)\s+answers?\b/gi)];
   if (matches.length) {
     answerCount = Math.max(...matches.map((m) => parseInt(m[1], 10)));
   } else {
-    // Look for answer containers
-    const answerSelectors = [
-      '[class*="answer"]',
-      '[id*="answer"]', 
-      'article[data-answer-id]',
-      '[class*="response"]',
-      '[class*="reply"]'
-    ];
-    answerCount = answerSelectors.reduce((count, selector) => {
-      return count + $(selector).length;
-    }, 0);
+    // Look for answer indicators in the card
+    const answerIndicators = $(questionElement).find('[class*="answer"], [class*="response"], [class*="reply"]').length;
+    answerCount = answerIndicators || 0;
   }
 
-  // Extract date more robustly
+  // Extract date from the card
   let askedWhen = '';
-  const timeElement = $('time').first();
+  const timeElement = $(questionElement).find('time').first();
   if (timeElement.length) {
     askedWhen = normalizeDateToDDMMYYYY(timeElement.attr('datetime') || timeElement.text());
   }
   
   if (!askedWhen) {
-    // Look for date patterns in the content
+    // Look for date patterns in the card content
     const datePatterns = [
       /\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},\s+20\d{2}\b/i,
       /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+20\d{2}\b/i,
@@ -102,7 +90,7 @@ function parseQuestionPage($, url) {
     ];
     
     for (const pattern of datePatterns) {
-      const match = $('body').text().match(pattern);
+      const match = $(questionElement).text().match(pattern);
       if (match) {
         askedWhen = normalizeDateToDDMMYYYY(match[0]);
         break;
@@ -110,18 +98,22 @@ function parseQuestionPage($, url) {
     }
   }
 
+  // Extract the question link
+  const questionLink = $(questionElement).find('a[href^="/questions/"]').first().attr('href');
+  const showPageLink = questionLink ? new URL(questionLink, BASE).toString() : '';
+
   return {
     questionText,
     companyNames,
     askedWhen,
     tags,
     answerCount,
-    answersUrl: url,
+    showPageLink
   };
 }
 
 function parseIndexPage($) {
-  const links = new Set();
+  const questions = [];
   
   // Check if we're blocked or hit a CAPTCHA
   const bodyText = $('body').text().toLowerCase();
@@ -130,13 +122,45 @@ function parseIndexPage($) {
     return [];
   }
   
-  $('a[href^=\"/questions/\"]').each((_, a) => {
-    const href = String($(a).attr('href') || '');
-    if (href.startsWith('/questions/') && !href.includes('?') && !href.includes('#')) {
-      links.add(new URL(href, BASE).toString());
+  // Find all question cards/containers
+  const questionSelectors = [
+    '[class*="question"]',
+    '[class*="card"]',
+    'article',
+    'li',
+    '.question-item',
+    '.question-card'
+  ];
+  
+  let questionElements = [];
+  for (const selector of questionSelectors) {
+    questionElements = $(selector);
+    if (questionElements.length > 0) {
+      break;
     }
-  });
-  return [...links];
+  }
+  
+  // If no specific question containers found, try to find by links
+  if (questionElements.length === 0) {
+    const questionLinks = $('a[href^="/questions/"]');
+    questionLinks.each((_, link) => {
+      const $link = $(link);
+      const questionData = parseQuestionCard($, $link.closest('div, li, article').length ? $link.closest('div, li, article') : $link.parent());
+      if (questionData.questionText) {
+        questions.push(questionData);
+      }
+    });
+  } else {
+    // Process each question container
+    questionElements.each((_, element) => {
+      const questionData = parseQuestionCard($, element);
+      if (questionData.questionText) {
+        questions.push(questionData);
+      }
+    });
+  }
+  
+  return questions;
 }
 
 await Actor.init();
@@ -144,7 +168,7 @@ await Actor.init();
 const input = await Actor.getInput() || {};
 const {
   startPage = 1,
-  endPage = 202,
+  endPage = 5,
   rateLimitMs = 800,
   useApifyProxy = true,
 } = input;
@@ -162,10 +186,10 @@ const crawler = new CheerioCrawler({
   proxyConfiguration: useApifyProxy
     ? await Actor.createProxyConfiguration()
     : undefined,
-  maxConcurrency: 3, // Reduced from 5 to be more respectful
+  maxConcurrency: 3,
   requestHandlerTimeoutSecs: 60,
-  maxRequestsPerMinute: 45, // Reduced from 60 to be more respectful
-  maxRequestRetries: 2, // Retry failed requests up to 2 times
+  maxRequestsPerMinute: 45,
+  maxRequestRetries: 2,
   requestHandler: async ({ request, $, log: crawleeLog }) => {
     const { label } = request.userData;
 
@@ -175,30 +199,19 @@ const crawler = new CheerioCrawler({
       if (label === 'INDEX') {
         const page = request.userData.page;
         crawleeLog.info(`Processing index page ${page}`);
-        const detailUrls = parseIndexPage($);
-        crawleeLog.info(`Found ${detailUrls.length} questions on page ${page}`);
+        const questions = parseIndexPage($);
+        crawleeLog.info(`Found ${questions.length} questions on page ${page}`);
         
-        if (detailUrls.length === 0) {
+        if (questions.length === 0) {
           crawleeLog.warning(`No questions found on page ${page} - page might be empty or blocked`);
         }
         
-        for (const url of detailUrls) {
-          await crawler.addRequests([{ url, userData: { label: 'DETAIL' } }]);
+        // Save all questions from this page
+        for (const question of questions) {
+          await Dataset.pushData(question);
         }
-      } else if (label === 'DETAIL') {
-        const item = parseQuestionPage($, request.url);
-        if (item.questionText) {
-          await Dataset.pushData(item);
-          crawleeLog.info(`Scraped question: "${item.questionText.substring(0, 50)}..."`);
-        } else {
-          crawleeLog.warning(`Empty question text on: ${request.url}`);
-          // Still save the item with available data for debugging
-          await Dataset.pushData({
-            ...item,
-            questionText: 'NO_TITLE_FOUND',
-            error: 'Could not extract question text'
-          });
-        }
+        
+        crawleeLog.info(`Saved ${questions.length} questions from page ${page}`);
       }
     } catch (error) {
       crawleeLog.error(`Error processing ${request.url}: ${error.message}`);
@@ -227,5 +240,5 @@ const crawler = new CheerioCrawler({
 await crawler.addRequests(requestList);
 await crawler.run();
 
-log.info('Done. Items saved to default dataset.');
+log.info('Done. All questions saved to default dataset.');
 await Actor.exit();
