@@ -183,7 +183,7 @@ const crawler = new CheerioCrawler({
         }
         
         for (const url of detailUrls) {
-          await Actor.addRequests([{ url, userData: { label: 'DETAIL' } }], { forefront: false });
+          await crawler.addRequests([{ url, userData: { label: 'DETAIL' } }]);
         }
       } else if (label === 'DETAIL') {
         const item = parseQuestionPage($, request.url);
