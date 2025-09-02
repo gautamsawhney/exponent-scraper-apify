@@ -119,7 +119,6 @@ function toSlugFromUrl(url) {
   try {
     const u = new URL(url);
     const parts = u.pathname.split('/').filter(Boolean);
-    // Expect /questions/<id-or-slug>/...
     return parts.length >= 2 ? parts[1] : parts[parts.length - 1];
   } catch {
     return '';
@@ -136,7 +135,6 @@ function collectQuestionsFromNextData(nextData) {
       return;
     }
     if (typeof node === 'object') {
-      // Heuristic: question-like objects may contain slug/id and title, tags, answers count
       const keys = Object.keys(node);
       const hasSlug = 'slug' in node || 'id' in node || 'questionId' in node;
       const hasTitle = 'title' in node || 'question' in node || 'name' in node;
@@ -169,7 +167,19 @@ function collectQuestionsFromNextData(nextData) {
   }
 
   visit(nextData);
-  return results; // Map slug -> data
+  return results;
+}
+
+function mergeQuestionData(base, extra) {
+  if (!extra) return base;
+  return {
+    questionText: base.questionText || extra.questionText || '',
+    companyNames: base.companyNames || extra.companyNames || '',
+    askedWhen: base.askedWhen || extra.askedWhen || '',
+    tags: base.tags || extra.tags || '',
+    answerCount: (base.answerCount && base.answerCount > 0) ? base.answerCount : (extra.answerCount || 0),
+    showPageLink: base.showPageLink || extra.showPageLink || ''
+  };
 }
 
 function parseIndexPage($) {
@@ -217,20 +227,15 @@ function parseIndexPage($) {
     });
   }
 
-  // Enrich from Next.js data if available (for tags, answerCount, dates)
   const nextData = tryParseNextData($);
   if (nextData) {
     const mapBySlug = collectQuestionsFromNextData(nextData);
-    for (const q of questions) {
+    for (let i = 0; i < questions.length; i += 1) {
+      const q = questions[i];
       const slug = toSlugFromUrl(q.showPageLink);
       if (!slug) continue;
       const extra = mapBySlug.get(slug);
-      if (!extra) continue;
-      if (!q.tags && extra.tags) q.tags = extra.tags;
-      if ((!q.answerCount || q.answerCount === 0) && typeof extra.answerCount === 'number') q.answerCount = extra.answerCount;
-      if (!q.companyNames && extra.companyNames) q.companyNames = extra.companyNames;
-      if (!q.askedWhen && extra.askedWhen) q.askedWhen = extra.askedWhen;
-      if (!q.questionText && extra.questionText) q.questionText = extra.questionText;
+      questions[i] = mergeQuestionData(q, extra);
     }
   }
   
@@ -260,7 +265,8 @@ const {
   useApifyProxy = true,
   apiToken,
   cookies: cookieString,
-  userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  fetchDetailMeta = true
 } = input;
 
 if (startPage > endPage) {
@@ -312,7 +318,7 @@ const crawler = new CheerioCrawler({
   requestHandlerTimeoutSecs: 60,
   maxRequestsPerMinute: 30,
   maxRequestRetries: 2,
-  requestHandler: async ({ request, $, log: crawleeLog }) => {
+  requestHandler: async ({ request, $, log: crawleeLog, enqueueLinks, parseWithCheerio }) => {
     const { label } = request.userData;
 
     if (rateLimitMs > 0) {
@@ -324,30 +330,29 @@ const crawler = new CheerioCrawler({
         const page = request.userData.page;
         crawleeLog.info(`Processing index page ${page}`);
         
-        if (page > 1 && page % 5 === 0) {
-          const extraDelay = 2000;
-          crawleeLog.info(`Adding extra delay of ${extraDelay}ms for page ${page}`);
-          await sleep(extraDelay);
-        }
-        
         const questions = parseIndexPage($);
         crawleeLog.info(`Found ${questions.length} questions on page ${page}`);
-        
-        if (questions.length === 0) {
-          crawleeLog.warning(`No questions found on page ${page} - page might be empty or blocked`);
-          
-          if (page < endPage) {
-            const blockDelay = 5000;
-            crawleeLog.info(`Page ${page} appears blocked, waiting ${blockDelay}ms before continuing`);
-            await sleep(blockDelay);
+
+        if (fetchDetailMeta) {
+          for (const q of questions) {
+            if (!q.showPageLink) continue;
+            await crawler.addRequests([{ url: q.showPageLink, userData: { label: 'DETAIL', base: q } }]);
           }
+        } else {
+          for (const q of questions) await Dataset.pushData(q);
         }
-        
-        for (const question of questions) {
-          await Dataset.pushData(question);
+      } else if (label === 'DETAIL') {
+        const base = request.userData.base || {};
+        // Parse __NEXT_DATA__ on detail page
+        const nextData = tryParseNextData($);
+        let detailExtra = null;
+        if (nextData) {
+          const mapBySlug = collectQuestionsFromNextData(nextData);
+          const slug = toSlugFromUrl(base.showPageLink || request.url);
+          detailExtra = mapBySlug.get(slug) || null;
         }
-        
-        crawleeLog.info(`Saved ${questions.length} questions from page ${page}`);
+        const merged = mergeQuestionData(base, detailExtra);
+        await Dataset.pushData(merged);
       }
     } catch (error) {
       crawleeLog.error(`Error processing ${request.url}: ${error.message}`);
@@ -357,7 +362,6 @@ const crawler = new CheerioCrawler({
         error: error.message,
         timestamp: new Date().toISOString()
       });
-      
       await sleep(3000);
     }
   },
@@ -370,7 +374,6 @@ const crawler = new CheerioCrawler({
       status: 'FAILED',
       timestamp: new Date().toISOString()
     });
-    
     await sleep(5000);
   },
 });
