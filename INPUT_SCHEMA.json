@@ -52,8 +52,8 @@
     "fetchDetailMeta": {
       "title": "Fetch detail metadata (tags/answers)",
       "type": "boolean",
-      "default": true,
-      "description": "Visit question pages to reliably fetch tags and answer counts"
+      "default": false,
+      "description": "Visit question pages to reliably fetch tags and answer counts (disabled - using index pages only)"
     }
   },
   "required": [

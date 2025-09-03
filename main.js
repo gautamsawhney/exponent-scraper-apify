@@ -225,20 +225,45 @@ function collectQuestionsFromNextData(nextData) {
             }
             
             // Extract answer count with more field names
-            const answerCountFields = ['answersCount', 'answerCount', 'numAnswers', 'answers_count', 'answer_count', 'totalAnswers', 'total_answers'];
+            const answerCountFields = ['answersCount', 'answerCount', 'numAnswers', 'answers_count', 'answer_count', 'totalAnswers', 'total_answers', 'answers', 'responses', 'replies'];
             for (const field of answerCountFields) {
               if (field in node) {
-                const ac = Number(node[field]);
-                if (!isNaN(ac) && ac > 0) {
-                  entry.answerCount = Math.max(entry.answerCount || 0, ac);
-                  break;
+                if (Array.isArray(node[field])) {
+                  // If it's an array, count the length
+                  const count = node[field].length;
+                  if (count > 0) {
+                    entry.answerCount = Math.max(entry.answerCount || 0, count);
+                  }
+                } else {
+                  // If it's a number or string, try to parse it
+                  const ac = Number(node[field]);
+                  if (!isNaN(ac) && ac > 0) {
+                    entry.answerCount = Math.max(entry.answerCount || 0, ac);
+                  }
                 }
               }
             }
             
-            // Check if answers array exists
-            if (Array.isArray(node.answers) && node.answers.length > 0) {
-              entry.answerCount = Math.max(entry.answerCount || 0, node.answers.length);
+            // Additional check for nested answer data
+            if (node.answerData && Array.isArray(node.answerData)) {
+              entry.answerCount = Math.max(entry.answerCount || 0, node.answerData.length);
+            }
+            
+            // If still no answer count, try to find it in nested objects
+            if (!entry.answerCount || entry.answerCount === 0) {
+              const nestedAnswerFields = ['stats', 'metrics', 'counts'];
+              for (const field of nestedAnswerFields) {
+                if (node[field] && typeof node[field] === 'object') {
+                  const nested = node[field];
+                  if ('answers' in nested || 'answerCount' in nested || 'answersCount' in nested) {
+                    const count = nested.answers?.length || Number(nested.answerCount) || Number(nested.answersCount);
+                    if (count > 0) {
+                      entry.answerCount = count;
+                      break;
+                    }
+                  }
+                }
+              }
             }
             
             // Extract date
@@ -251,7 +276,7 @@ function collectQuestionsFromNextData(nextData) {
             }
             
             results.set(slug, entry);
-            log.info(`Found question data for slug ${slug}: tags=${entry.tags}, answers=${entry.answerCount}`);
+            log.info(`Found question data for slug ${slug}: tags="${entry.tags}", answers=${entry.answerCount || 0}`);
           }
         }
       }
@@ -364,7 +389,7 @@ const {
   apiToken,
   cookies: cookieString,
   userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  fetchDetailMeta = true
+  fetchDetailMeta = false
 } = input;
 
 if (startPage > endPage) {
