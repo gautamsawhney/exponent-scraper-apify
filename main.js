@@ -45,10 +45,27 @@ function parseQuestionCard($, questionElement) {
     $(questionElement).find('a').first().text()
   );
 
+  // Enhanced tag extraction with more selectors
+  const tagSelectors = [
+    '[class*="tag"]',
+    '[class*="category"]', 
+    '[class*="topic"]',
+    '[class*="label"]',
+    '[class*="badge"]',
+    '[data-testid*="tag"]',
+    '[data-testid*="category"]',
+    'a[href*="type="]',
+    'a[href*="category="]',
+    'a[href*="tag="]',
+    'span[class*="tag"]',
+    'div[class*="tag"]'
+  ];
+  
   const tags = uniq([
-    ...$(questionElement).find('[class*="tag"], [class*="category"], [class*="topic"]').map((_, el) => $(el).text()).get(),
-    ...$(questionElement).find('a[href*="type"], a[href*="category"]').map((_, el) => $(el).text()).get()
-  ]).join(', ');
+    ...tagSelectors.flatMap(selector => 
+      $(questionElement).find(selector).map((_, el) => clean($(el).text())).get()
+    )
+  ]).filter(tag => tag.length > 0 && tag.length < 50).join(', ');
 
   const companySources = [
     ...$(questionElement).find('a[href*="?company="]').map((_, el) => $(el).text()).get(),
@@ -58,14 +75,41 @@ function parseQuestionCard($, questionElement) {
   
   const companyNames = uniq(companySources.filter(c => c.length > 1 && c.length < 100)).join(', ');
 
+  // Enhanced answer count extraction
   let answerCount = 0;
   const answerText = $(questionElement).text();
-  const matches = [...answerText.matchAll(/\b(\d+)\s+answers?\b/gi)];
-  if (matches.length) {
-    answerCount = Math.max(...matches.map((m) => parseInt(m[1], 10)));
-  } else {
-    const answerIndicators = $(questionElement).find('[class*="answer"], [class*="response"], [class*="reply"]').length;
-    answerCount = answerIndicators || 0;
+  
+  // Try multiple patterns for answer count
+  const answerPatterns = [
+    /\b(\d+)\s+answers?\b/gi,
+    /\b(\d+)\s+replies?\b/gi,
+    /\b(\d+)\s+responses?\b/gi,
+    /answers?\s*[:\-]?\s*(\d+)/gi,
+    /replies?\s*[:\-]?\s*(\d+)/gi,
+    /responses?\s*[:\-]?\s*(\d+)/gi
+  ];
+  
+  for (const pattern of answerPatterns) {
+    const matches = [...answerText.matchAll(pattern)];
+    if (matches.length) {
+      answerCount = Math.max(...matches.map((m) => parseInt(m[1], 10)));
+      break;
+    }
+  }
+  
+  // Fallback: count answer-related elements
+  if (answerCount === 0) {
+    const answerSelectors = [
+      '[class*="answer"]',
+      '[class*="response"]', 
+      '[class*="reply"]',
+      '[class*="comment"]',
+      '[data-testid*="answer"]',
+      '[data-testid*="response"]'
+    ];
+    answerCount = answerSelectors.reduce((count, selector) => {
+      return count + $(questionElement).find(selector).length;
+    }, 0);
   }
 
   let askedWhen = '';
@@ -127,46 +171,100 @@ function toSlugFromUrl(url) {
 
 function collectQuestionsFromNextData(nextData) {
   const results = new Map();
+  log.info('Starting Next.js data collection...');
 
-  function visit(node) {
+  function visit(node, path = '') {
     if (!node) return;
     if (Array.isArray(node)) {
-      for (const item of node) visit(item);
+      for (let i = 0; i < node.length; i++) {
+        visit(node[i], `${path}[${i}]`);
+      }
       return;
     }
     if (typeof node === 'object') {
       const keys = Object.keys(node);
-      const hasSlug = 'slug' in node || 'id' in node || 'questionId' in node;
-      const hasTitle = 'title' in node || 'question' in node || 'name' in node;
-      const hasPath = typeof node.href === 'string' && node.href.startsWith('/questions/');
-      if ((hasSlug || hasPath) && hasTitle) {
-        const href = node.href || (typeof node.slug === 'string' ? `/questions/${node.slug}` : undefined);
-        if (href && href.startsWith('/questions/')) {
-          const fullUrl = new URL(href, BASE).toString();
+      
+      // Look for question-like objects with more flexible matching
+      const hasQuestionId = 'id' in node || 'questionId' in node || 'slug' in node;
+      const hasQuestionContent = 'title' in node || 'question' in node || 'name' in node || 'content' in node;
+      const hasQuestionPath = typeof node.href === 'string' && node.href.includes('/questions/');
+      const hasQuestionUrl = typeof node.url === 'string' && node.url.includes('/questions/');
+      
+      if ((hasQuestionId || hasQuestionPath || hasQuestionUrl) && hasQuestionContent) {
+        const href = node.href || node.url || (typeof node.slug === 'string' ? `/questions/${node.slug}` : undefined);
+        if (href && href.includes('/questions/')) {
+          const fullUrl = href.startsWith('http') ? href : new URL(href, BASE).toString();
           const slug = toSlugFromUrl(fullUrl);
-          const entry = results.get(slug) || { showPageLink: fullUrl };
-          entry.questionText = entry.questionText || String(node.title || node.question || node.name || '').trim();
-          const tagsArr = [];
-          if (Array.isArray(node.tags)) tagsArr.push(...node.tags);
-          if (Array.isArray(node.categories)) tagsArr.push(...node.categories);
-          if (Array.isArray(node.topics)) tagsArr.push(...node.topics);
-          entry.tags = uniq([...(entry.tags ? entry.tags.split(',') : []), ...tagsArr]).join(', ');
-          const companies = [];
-          if (Array.isArray(node.companies)) companies.push(...node.companies.map(String));
-          if (typeof node.company === 'string') companies.push(node.company);
-          entry.companyNames = uniq([...(entry.companyNames ? entry.companyNames.split(',') : []), ...companies]).join(', ');
-          const ac = Number(node.answersCount ?? node.answerCount ?? node.numAnswers ?? node.answers?.length);
-          if (!isNaN(ac)) entry.answerCount = Math.max(entry.answerCount || 0, ac);
-          const date = node.createdAt || node.publishedAt || node.date || node.updatedAt;
-          if (date && !entry.askedWhen) entry.askedWhen = normalizeDateToDDMMYYYY(String(date));
-          results.set(slug, entry);
+          
+          if (slug) {
+            const entry = results.get(slug) || { showPageLink: fullUrl };
+            
+            // Extract question text
+            entry.questionText = entry.questionText || String(node.title || node.question || node.name || node.content || '').trim();
+            
+            // Extract tags with more field names
+            const tagsArr = [];
+            if (Array.isArray(node.tags)) tagsArr.push(...node.tags.map(String));
+            if (Array.isArray(node.categories)) tagsArr.push(...node.categories.map(String));
+            if (Array.isArray(node.topics)) tagsArr.push(...node.topics.map(String));
+            if (Array.isArray(node.labels)) tagsArr.push(...node.labels.map(String));
+            if (typeof node.tag === 'string') tagsArr.push(node.tag);
+            if (typeof node.category === 'string') tagsArr.push(node.category);
+            if (typeof node.topic === 'string') tagsArr.push(node.topic);
+            
+            if (tagsArr.length > 0) {
+              entry.tags = uniq([...(entry.tags ? entry.tags.split(',') : []), ...tagsArr]).join(', ');
+            }
+            
+            // Extract companies
+            const companies = [];
+            if (Array.isArray(node.companies)) companies.push(...node.companies.map(String));
+            if (typeof node.company === 'string') companies.push(node.company);
+            if (companies.length > 0) {
+              entry.companyNames = uniq([...(entry.companyNames ? entry.companyNames.split(',') : []), ...companies]).join(', ');
+            }
+            
+            // Extract answer count with more field names
+            const answerCountFields = ['answersCount', 'answerCount', 'numAnswers', 'answers_count', 'answer_count', 'totalAnswers', 'total_answers'];
+            for (const field of answerCountFields) {
+              if (field in node) {
+                const ac = Number(node[field]);
+                if (!isNaN(ac) && ac > 0) {
+                  entry.answerCount = Math.max(entry.answerCount || 0, ac);
+                  break;
+                }
+              }
+            }
+            
+            // Check if answers array exists
+            if (Array.isArray(node.answers) && node.answers.length > 0) {
+              entry.answerCount = Math.max(entry.answerCount || 0, node.answers.length);
+            }
+            
+            // Extract date
+            const dateFields = ['createdAt', 'publishedAt', 'date', 'updatedAt', 'created_at', 'published_at', 'updated_at'];
+            for (const field of dateFields) {
+              if (field in node && !entry.askedWhen) {
+                entry.askedWhen = normalizeDateToDDMMYYYY(String(node[field]));
+                if (entry.askedWhen) break;
+              }
+            }
+            
+            results.set(slug, entry);
+            log.info(`Found question data for slug ${slug}: tags=${entry.tags}, answers=${entry.answerCount}`);
+          }
         }
       }
-      for (const k of keys) visit(node[k]);
+      
+      // Continue traversing
+      for (const k of keys) {
+        visit(node[k], `${path}.${k}`);
+      }
     }
   }
 
   visit(nextData);
+  log.info(`Next.js data collection complete. Found ${results.size} questions.`);
   return results;
 }
 
@@ -332,8 +430,15 @@ const crawler = new CheerioCrawler({
         
         const questions = parseIndexPage($);
         crawleeLog.info(`Found ${questions.length} questions on page ${page}`);
+        
+        // Log sample question data for debugging
+        if (questions.length > 0) {
+          const sample = questions[0];
+          crawleeLog.info(`Sample question: title="${sample.questionText}", tags="${sample.tags}", answers=${sample.answerCount}`);
+        }
 
         if (fetchDetailMeta) {
+          crawleeLog.info(`Enqueueing ${questions.length} detail requests for page ${page}`);
           for (const q of questions) {
             if (!q.showPageLink) continue;
             await crawler.addRequests([{ url: q.showPageLink, userData: { label: 'DETAIL', base: q } }]);
@@ -343,15 +448,27 @@ const crawler = new CheerioCrawler({
         }
       } else if (label === 'DETAIL') {
         const base = request.userData.base || {};
+        crawleeLog.info(`Processing detail page: ${request.url}`);
+        
         // Parse __NEXT_DATA__ on detail page
         const nextData = tryParseNextData($);
         let detailExtra = null;
         if (nextData) {
+          crawleeLog.info('Found Next.js data on detail page');
           const mapBySlug = collectQuestionsFromNextData(nextData);
           const slug = toSlugFromUrl(base.showPageLink || request.url);
           detailExtra = mapBySlug.get(slug) || null;
+          if (detailExtra) {
+            crawleeLog.info(`Detail extra data: tags="${detailExtra.tags}", answers=${detailExtra.answerCount}`);
+          } else {
+            crawleeLog.warning(`No detail extra data found for slug: ${slug}`);
+          }
+        } else {
+          crawleeLog.warning('No Next.js data found on detail page');
         }
+        
         const merged = mergeQuestionData(base, detailExtra);
+        crawleeLog.info(`Final merged data: tags="${merged.tags}", answers=${merged.answerCount}`);
         await Dataset.pushData(merged);
       }
     } catch (error) {
